@@ -24,4 +24,18 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 
+## AI Audio Tab (cloned from Ai-Audio2 repo)
+
+The "Ai Audio" tab in `artifacts/srt-tools` is a full TTS editor cloned verbatim from https://github.com/2absolutetwo/Ai-Audio2 (originally the `notes-app` artifact in that repo).
+
+- **Backend** (`artifacts/api-server`):
+  - `POST /api/tts` — synthesizes MP3 audio with `msedge-tts` (Microsoft Edge online voices, free, no API key). Body: `{ text, voice? }`. Auto-detects `bn-BD-NabanitaNeural` for Bangla text and `en-US-AriaNeural` for English when `voice` is omitted. Max 5000 chars.
+  - `GET /api/tts/voices` — returns the full list of available Edge voices (cached in memory).
+- **Frontend** (`artifacts/srt-tools/src`):
+  - `tabs/AiAudioTab.tsx` mounts `<Editor />`.
+  - `components/editor/note-editor.tsx` — main editor (chunked synthesis, playback queue, MP3 download, undo, copy/cut/paste, history).
+  - `components/editor/voice-picker.tsx` & `favorite-voices-button.tsx` — language → voice selector with starred favorites.
+  - `hooks/use-favorite-voices.ts` — favorite voices stored in `localStorage` under key `favorite-voices`.
+  - Sonner `<Toaster />` is mounted in `main.tsx` for editor notifications.
+
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
