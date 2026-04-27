@@ -1,12 +1,14 @@
-import React, { useState, useRef, useEffect, KeyboardEvent } from "react";
-import { Copy, Scissors, Undo, Play, Square, Loader2, Download, ListMusic, RotateCcw, CloudDownload, Music, X, FolderInput } from "lucide-react";
+import React, { useState, useRef, useEffect, KeyboardEvent, useMemo } from "react";
+import { Copy, Scissors, Undo, Play, Square, Loader2, Download, ListMusic, RotateCcw, CloudDownload, Music, X, FolderInput, Lock, Unlock } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { VoicePicker } from "./voice-picker";
 import { FavoriteVoicesButton } from "./favorite-voices-button";
+import { useVoices, getVoiceShortDisplay } from "@/hooks/use-voices";
 
 const VOICE_STORAGE_KEY = "tts-selected-voice";
 const VOICE_BY_LABEL_STORAGE_KEY = "tts-voice-by-label";
+const LOCKED_LABELS_STORAGE_KEY = "tts-locked-labels";
 
 function escapeHtml(text: string) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -586,6 +588,25 @@ export function Editor({ onSendToSpliter }: EditorProps = {}) {
       return {};
     }
   });
+  const [lockedLabels, setLockedLabels] = useState<Record<string, boolean>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const stored = localStorage.getItem(LOCKED_LABELS_STORAGE_KEY);
+      if (!stored) return {};
+      const parsed = JSON.parse(stored);
+      if (parsed && typeof parsed === "object") {
+        const out: Record<string, boolean> = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          if (v === true) out[k] = true;
+        }
+        return out;
+      }
+      return {};
+    } catch {
+      return {};
+    }
+  });
+  const allVoices = useVoices();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -608,9 +629,24 @@ export function Editor({ onSendToSpliter }: EditorProps = {}) {
     }
   }, [voiceByLabel]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(LOCKED_LABELS_STORAGE_KEY, JSON.stringify(lockedLabels));
+    } catch {
+      // ignore quota errors
+    }
+  }, [lockedLabels]);
+
+  const isLabelLocked = !!lockedLabels[cardLabel];
+
   const handleVoiceSelect = React.useCallback(
     (voice: string | null) => {
       setSelectedVoice(voice);
+      if (lockedLabels[cardLabel]) {
+        // Locked: keep the saved binding for this label untouched.
+        return;
+      }
       setVoiceByLabel((prev) => {
         const next = { ...prev };
         if (voice) {
@@ -621,11 +657,36 @@ export function Editor({ onSendToSpliter }: EditorProps = {}) {
         return next;
       });
     },
-    [cardLabel],
+    [cardLabel, lockedLabels],
   );
+
+  const toggleLabelLock = React.useCallback(() => {
+    setLockedLabels((prev) => {
+      const next = { ...prev };
+      if (next[cardLabel]) {
+        delete next[cardLabel];
+        toast.success(`Unlocked voice for ${cardLabel}`);
+      } else {
+        // When locking, snapshot the current selection as the saved voice
+        // so the lock has something meaningful to protect.
+        if (selectedVoice) {
+          setVoiceByLabel((prevMap) => ({ ...prevMap, [cardLabel]: selectedVoice }));
+        }
+        next[cardLabel] = true;
+        toast.success(`Locked voice for ${cardLabel}`);
+      }
+      return next;
+    });
+  }, [cardLabel, selectedVoice]);
 
   const savedVoiceForLabel = voiceByLabel[cardLabel];
   const isVoiceSavedForLabel = !!savedVoiceForLabel && savedVoiceForLabel === selectedVoice;
+  const savedVoiceMeta = useMemo(() => {
+    if (!savedVoiceForLabel || !allVoices) return null;
+    const v = allVoices.find((x) => x.ShortName === savedVoiceForLabel);
+    return v ? { short: getVoiceShortDisplay(v) } : null;
+  }, [savedVoiceForLabel, allVoices]);
+  const savedVoiceShort = savedVoiceMeta?.short ?? null;
 
   const stopPlayback = React.useCallback(() => {
     if (audioRef.current) {
@@ -892,20 +953,58 @@ export function Editor({ onSendToSpliter }: EditorProps = {}) {
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm font-semibold text-foreground tracking-wide">AI Voice</span>
           {cardLabel && (
-            <span
-              className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full truncate ${
-                isVoiceSavedForLabel
-                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
-                  : "bg-muted text-muted-foreground"
-              }`}
-              title={
-                isVoiceSavedForLabel
-                  ? `Voice saved for ${cardLabel}`
-                  : `No voice saved for ${cardLabel} yet`
-              }
-            >
-              {isVoiceSavedForLabel ? `★ ${cardLabel}` : `for ${cardLabel}`}
-            </span>
+            <>
+              <VoicePicker
+                selectedVoice={selectedVoice}
+                onSelect={handleVoiceSelect}
+                trigger={
+                  <button
+                    type="button"
+                    title={
+                      savedVoiceForLabel
+                        ? `Voice saved for ${cardLabel}: ${savedVoiceShort ?? savedVoiceForLabel}. Click to change.`
+                        : `No voice saved for ${cardLabel} yet. Click to set one.`
+                    }
+                    className={`group inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full truncate transition-colors hover:brightness-110 ${
+                      isVoiceSavedForLabel
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
+                        : savedVoiceForLabel
+                        ? "bg-emerald-50 text-emerald-700/80 dark:bg-emerald-950/60 dark:text-emerald-400/80"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                    data-testid="button-card-label-voice"
+                  >
+                    <span>{isVoiceSavedForLabel ? `★ ${cardLabel}` : `for ${cardLabel}`}</span>
+                    {savedVoiceShort && (
+                      <>
+                        <span className="opacity-50">·</span>
+                        <span className="normal-case tracking-normal font-medium truncate max-w-[120px]">
+                          {savedVoiceShort}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                }
+              />
+              <button
+                type="button"
+                onClick={toggleLabelLock}
+                title={
+                  isLabelLocked
+                    ? `Voice locked for ${cardLabel}. Click to unlock.`
+                    : `Lock current voice for ${cardLabel}.`
+                }
+                aria-label={isLabelLocked ? "Unlock voice for this card" : "Lock voice for this card"}
+                className={`shrink-0 h-6 w-6 inline-flex items-center justify-center rounded-md border transition-colors ${
+                  isLabelLocked
+                    ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
+                    : "bg-transparent border-border text-muted-foreground hover:bg-accent"
+                }`}
+                data-testid="button-toggle-voice-lock"
+              >
+                {isLabelLocked ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+              </button>
+            </>
           )}
         </div>
         <div className="flex items-center gap-2">
